@@ -1,0 +1,72 @@
+/* ── "Tap To Place Model" overlay text ── */
+.over {
+  z-index: 10;
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  text-align: center;
+  color: white;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.55);
+}
+
+#promptText {
+  font-size: 1.15em;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  bottom: 120px;        /* Move up slightly to make room for buttons */
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 10px 20px;
+  border-radius: 30px;
+  backdrop-filter: blur(8px);
+}
+
+/* ── Color Configuration UI ── */
+.color-controls {
+  position: absolute;
+  bottom: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 20px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.5s ease;
+}
+
+/* Show when the model has been placed */
+.color-controls.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.color-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 3px solid white;
+  background: var(--btn-color);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.color-btn:active {
+  transform: scale(0.9);
+}
+
+.color-btn.active {
+  transform: scale(1.2);
+  border-color: #ffd700; /* Gold border for active */
+}
+
+/* ── Hide 8th Wall branding ── */
+img[src*="poweredby"],
+#poweredby,
+.poweredby-container {
+  display: none !important;
+}
