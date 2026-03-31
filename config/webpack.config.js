@@ -64,6 +64,13 @@ const makeDefaultHtmlLoader = () => ({
             tag: '*',
             attribute: attr,
             type: 'src',
+            filter: (tag, attribute, attributes) => {
+              const value = attributes[attribute]
+              if (value && (value.includes('external/') || value.startsWith('http'))) {
+                return false
+              }
+              return true
+            },
           })),
         ],
       },
