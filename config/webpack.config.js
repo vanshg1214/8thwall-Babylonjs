@@ -19,13 +19,13 @@ const makeJsLoader = () => ({
       plugins: ['@babel/plugin-transform-runtime'],
     },
   },
-  exclude: /node_modules/,
+  exclude: [/node_modules/, path.join(rootPath, 'external')],
 })
 
 const makeTsLoader = () => ({
   test: /\.ts$/,
   loader: 'ts-loader',
-  exclude: /node_modules/,
+  exclude: [/node_modules/, path.join(rootPath, 'external')],
 })
 
 const makeCssLoader = () => ({
