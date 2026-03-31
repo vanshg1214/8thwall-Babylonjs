@@ -2,3 +2,8 @@ node_modules
 dist
 tmp
 .DS_Store
+temp_8thwall
+temp_*
+*.log
+ip.txt
+ip-clean.txt
