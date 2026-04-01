@@ -51,29 +51,7 @@ const makeDefaultHtmlLoader = () => ({
     loader: 'html-loader',
     options: {
       esModule: false,
-      sources: {
-        list: [
-          '...',
-          {
-            tag: 'script',
-            attribute: 'src',
-            type: 'src',
-            filter: () => false,
-          },
-          ...ATTRIBUTES_TO_EXPAND.map(attr => ({
-            tag: '*',
-            attribute: attr,
-            type: 'src',
-            filter: (tag, attribute, attributes) => {
-              const value = attributes[attribute]
-              if (value && (value.includes('external/') || value.startsWith('http'))) {
-                return false
-              }
-              return true
-            },
-          })),
-        ],
-      },
+      sources: false,
     },
   },
 })
