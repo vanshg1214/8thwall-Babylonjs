@@ -39,6 +39,33 @@ export const tapPlaceComponent = {
     this.placedEntity = null;
     this.activeModel = '#duckModel';
 
+    // Color button logic
+    colorBtns.forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation(); // Don't trigger ground placement
+        
+        const color = btn.getAttribute('data-color');
+        
+        // Update button UI
+        colorBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+
+        // Apply color to the model!
+        if (this.modelChild) {
+          const mesh = this.modelChild.getObject3D('mesh');
+          if (mesh) {
+            mesh.traverse((node) => {
+              if (node.isMesh) {
+                // Clone material so we don't affect other instances
+                node.material = node.material.clone();
+                node.material.color.set(color);
+              }
+            });
+          }
+        }
+      });
+    });
+
     ground.addEventListener('click', (event) => {
       if (this.hasPlacedModel) return
 
