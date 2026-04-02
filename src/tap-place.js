@@ -1,25 +1,30 @@
 // Custom component to track and display dimensions with arrows
 const dimensionsIndicatorComponent = {
   schema: {
-    baseWidth: {default: 100},
-    baseHeight: {default: 100},
-    baseDepth: {default: 100},
+    baseWidth: {default: 300}, // Length in mm
+    baseHeight: {default: 30}, // Width in mm
   },
   init() {
     this.widthLabel = this.el.querySelector('.width-label')
     this.heightLabel = this.el.querySelector('.height-label')
-    this.depthLabel = this.el.querySelector('.depth-label')
+    this.measurementValue = document.getElementById('measurementValue')
   },
   tick() {
+    // Dynamically find labels if not already found (needed because they are added later)
+    if (!this.widthLabel) this.widthLabel = this.el.querySelector('.width-label')
+    if (!this.heightLabel) this.heightLabel = this.el.querySelector('.height-label')
+
     const currentScale = this.el.object3D.scale.x
     
     const w = Math.round(this.data.baseWidth * currentScale)
     const h = Math.round(this.data.baseHeight * currentScale)
-    const d = Math.round(this.data.baseDepth * currentScale)
 
-    if (this.widthLabel) this.widthLabel.setAttribute('value', `${w}cm`)
-    if (this.heightLabel) this.heightLabel.setAttribute('value', `${h}cm`)
-    if (this.depthLabel) this.depthLabel.setAttribute('value', `${d}cm`)
+    if (this.widthLabel) this.widthLabel.setAttribute('value', `${w} mm`)
+    if (this.heightLabel) this.heightLabel.setAttribute('value', `${h} mm`)
+    
+    if (this.measurementValue) {
+      this.measurementValue.textContent = `L ${w} mm x W ${h} mm`
+    }
   }
 }
 
@@ -37,26 +42,21 @@ export const tapPlaceComponent = {
     
     this.hasPlacedModel = false;
     this.placedEntity = null;
-    this.activeModel = '#duckModel';
+    this.activeModel = '#metalRulerModel';
+    this.measurementsContainer = document.getElementById('measurementsContainer')
 
     // Color button logic
     colorBtns.forEach(btn => {
       btn.addEventListener('click', (e) => {
-        e.stopPropagation(); // Don't trigger ground placement
-        
+        e.stopPropagation();
         const color = btn.getAttribute('data-color');
-        
-        // Update button UI
         colorBtns.forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
-
-        // Apply color to the model!
         if (this.modelChild) {
           const mesh = this.modelChild.getObject3D('mesh');
           if (mesh) {
             mesh.traverse((node) => {
               if (node.isMesh) {
-                // Clone material so we don't affect other instances
                 node.material = node.material.clone();
                 node.material.color.set(color);
               }
@@ -71,58 +71,57 @@ export const tapPlaceComponent = {
 
       this.prompt.style.display = 'none'
       this.colorControls.classList.add('visible')
+      if (this.measurementsContainer) this.measurementsContainer.classList.add('visible')
       
       const newElement = document.createElement('a-entity')
       const touchPoint = event.detail.intersection.point
       newElement.setAttribute('position', touchPoint)
-      newElement.setAttribute('rotation', `0 ${Math.random() * 360} 0`)
+      newElement.setAttribute('rotation', '0 0 0')
       newElement.setAttribute('visible', 'false')
+      // Start at scale 1 (NOT 0.0001) to avoid corrupting measurements
+      // We'll handle the entrance animation differently
       newElement.setAttribute('scale', '0.0001 0.0001 0.0001')
 
       // Dimensions Indicator Component
-      newElement.setAttribute('dimensions-indicator', {baseWidth: 100, baseHeight: 100, baseDepth: 100})
+      newElement.setAttribute('dimensions-indicator', {})
 
       // Utility to create an arrow line
-      const createArrow = (name, position, rotation, labelColor) => {
+      const createArrow = (name, length, labelColor) => {
         const arrowGroup = document.createElement('a-entity')
-        arrowGroup.setAttribute('position', position)
-        arrowGroup.setAttribute('rotation', rotation)
-
+        
         // The Line
         const line = document.createElement('a-box')
-        line.setAttribute('scale', '1 0.01 0.01')
+        line.setAttribute('scale', `${length} 0.02 0.02`)
         line.setAttribute('material', 'color: #FFFFFF; shader: flat; opacity: 0.8')
         arrowGroup.appendChild(line)
 
         // End Cap 1
-        const cap1 = document.createElement('a-box')
-        cap1.setAttribute('position', '-0.5 0 0')
-        cap1.setAttribute('scale', '0.02 0.1 0.02')
+        const cap1 = document.createElement('a-sphere')
+        cap1.setAttribute('position', `${-length / 2} 0 0`)
+        cap1.setAttribute('radius', '0.04') 
         cap1.setAttribute('material', 'color: #FFFFFF; shader: flat')
         arrowGroup.appendChild(cap1)
 
         // End Cap 2
-        const cap2 = document.createElement('a-box')
-        cap2.setAttribute('position', '0.5 0 0')
-        cap2.setAttribute('scale', '0.02 0.1 0.02')
+        const cap2 = document.createElement('a-sphere')
+        cap2.setAttribute('position', `${length / 2} 0 0`)
+        cap2.setAttribute('radius', '0.04')
         cap2.setAttribute('material', 'color: #FFFFFF; shader: flat')
         arrowGroup.appendChild(cap2)
 
-        // The Label (Container to counter-rotate if needed, but we'll just use billboard-like text)
+        // The Label
         const labelText = document.createElement('a-text')
         labelText.classList.add(`${name}-label`)
-        labelText.setAttribute('value', '100cm')
+        labelText.setAttribute('value', '')
         labelText.setAttribute('align', 'center')
         labelText.setAttribute('color', labelColor)
-        labelText.setAttribute('scale', '1 1 1')
-        labelText.setAttribute('side', 'double') // Visible from both sides
-        labelText.setAttribute('position', '0 0.25 0')
+        labelText.setAttribute('scale', '0.8 0.8 0.8') // Bigger text for clarity
+        labelText.setAttribute('side', 'double')
+        labelText.setAttribute('position', `0 0.15 0`) // Higher up
         labelText.setAttribute('baseline', 'bottom')
-        
-        // Use a more reliable font setup
+        labelText.setAttribute('wrap-count', '12')
         labelText.setAttribute('font', 'roboto')
         
-        // Counter-rotate the text for Height arrow so it stays horizontal
         if (name === 'height') {
           labelText.setAttribute('rotation', '0 0 -90') 
         }
@@ -131,17 +130,10 @@ export const tapPlaceComponent = {
         return arrowGroup
       }
 
-      // Add Width Arrow (X-Axis)
-      newElement.appendChild(createArrow('width', '0 1.2 0.6', '0 0 0', '#FFFFFF'))
-      
-      // Add Height Arrow (Y-Axis) - Vertically aligned
-      newElement.appendChild(createArrow('height', '-0.6 0.6 0.6', '0 0 90', '#FFA500'))
+      // Arrows will be added in model-loaded event once we have accurate dimensions
 
-      // Add Depth Arrow (Z-Axis) - Along Z
-      newElement.appendChild(createArrow('depth', '0.6 1.2 0', '0 90 0', '#00FFFF'))
-
-      // Interactions
       newElement.classList.add('cantap')
+
       const modelChild = document.createElement('a-entity')
       this.modelChild = modelChild
       modelChild.setAttribute('gltf-model', this.activeModel)
@@ -155,14 +147,94 @@ export const tapPlaceComponent = {
       this.placedEntity = newElement
 
       modelChild.addEventListener('model-loaded', () => {
-        newElement.setAttribute('visible', 'true')
-        newElement.setAttribute('animation', {
-          property: 'scale',
-          to: '1 1 1',
-          easing: 'easeOutElastic',
-          dur: 800,
-        })
+        setTimeout(() => {
+          const mesh = modelChild.getObject3D('mesh')
+          if (mesh) {
+            // ============================================================
+            // CRITICAL FIX: Temporarily set parent to scale 1 for accurate
+            // measurement. The parent starts at 0.0001 which corrupts
+            // THREE.Box3.setFromObject() since it measures in world space.
+            // ============================================================
+            newElement.object3D.scale.set(1, 1, 1)
+            newElement.object3D.updateMatrixWorld(true)
+
+            // Now measure at TRUE native size using a comprehensive traverse
+            const box = new THREE.Box3()
+            let meshCount = 0
+            mesh.traverse((node) => {
+              if (node.isMesh) {
+                meshCount++
+                node.visible = true // Ensure it's not hidden
+                if (node.material) {
+                  node.material.transparent = false
+                  node.material.opacity = 1.0
+                }
+                node.geometry.computeBoundingBox()
+                const childBox = new THREE.Box3().setFromObject(node)
+                box.union(childBox)
+              }
+            })
+
+            if (meshCount === 0) {
+              console.warn('No meshes found in model')
+            }
+
+            const size = new THREE.Vector3()
+            box.getSize(size)
+            const maxDim = Math.max(size.x, size.y, size.z)
+
+            // ============================================================
+            // MODEL NORMALISATION logic (0.596m)
+            // ============================================================
+            const TARGET_METRES = 0.596
+            const modelScale = TARGET_METRES / maxDim
+            
+            // Set scale via A-Frame attribute
+            modelChild.setAttribute('scale', `${modelScale} ${modelScale} ${modelScale}`)
+
+            // ============================================================
+            // LOCAL CENTERING FIX (Absolute Reset)
+            // ============================================================
+            mesh.updateMatrixWorld(true)
+            const worldBox = new THREE.Box3().setFromObject(mesh)
+            
+            // Get current world center and world floor
+            const worldCenter = new THREE.Vector3()
+            worldBox.getCenter(worldCenter)
+            const worldMin = worldBox.min.clone()
+            
+            // Convert these world positions to modelChild local space
+            const localCenter = modelChild.object3D.worldToLocal(worldCenter)
+            const localMin = modelChild.object3D.worldToLocal(worldMin)
+
+            // Adjust mesh position so local center is at 0, 0, 0
+            mesh.position.x -= localCenter.x
+            mesh.position.z -= localCenter.z
+            
+            // Adjust mesh position so its bottom is sitting on the floor (Y=0)
+            // (Note: localMin now has localCenter subtracted from it)
+            mesh.position.y -= localMin.y - 0.002 // Sit slightly above ground
+
+            // Numerical length only
+            const lengthLabel = Math.round(maxDim * modelScale * 1000)
+            const label = document.getElementById('measurementValue')
+            if (label) {
+              label.textContent = lengthLabel
+            }
+
+
+            // ============================================================
+            // Set outer parent to 1.0 for immediate visibility (no animation)
+            // ============================================================
+            newElement.object3D.scale.set(1, 1, 1)
+          }
+          
+          newElement.setAttribute('visible', 'true')
+        }, 150)
       })
+
+
+
 
       const enableInteractions = () => {
         if (newElement.hasAttribute('xrextras-hold-drag')) return

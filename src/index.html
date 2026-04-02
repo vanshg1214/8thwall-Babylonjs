@@ -41,13 +41,20 @@
 
 
 <div class="over">
-  <span id="promptText">Tap to Place the Duck</span>
+  <span id="promptText">Tap to Place the Ruler</span>
   
   <div class="color-controls" id="colorControls">
     <button class="color-btn" data-color="#FF0000" style="--btn-color: #FF0000;"></button>
     <button class="color-btn" data-color="#00FF00" style="--btn-color: #00FF00;"></button>
     <button class="color-btn" data-color="#0000FF" style="--btn-color: #0000FF;"></button>
   </div>
+
+  <div class="measurements-container" id="measurementsContainer">
+    <div class="measurements-pill">
+      Measurements: <span id="measurementValue">L 300 mm x W 30 mm</span>
+    </div>
+  </div>
+
 </div>
 
 
@@ -62,6 +69,7 @@
   renderer="colorManagement:true"
   xrweb="
     allowedDevices: any;
+    scale: absolute;
     lightEstimation: true;
     defaultEnvironmentFogIntensity: 0.5; 
     defaultEnvironmentFloorTexture: #groundTex; 
@@ -70,10 +78,14 @@
     defaultEnvironmentSkyTopColor: #5ac8fa;
     defaultEnvironmentSkyGradientStrength: 0.5;">
 
+
+
   <!-- We can define assets here to be loaded when A-Frame initializes -->
   <a-assets>
     <img id="groundTex" src="assets/sand.jpg">
     <a-asset-item id="duckModel" src="assets/duck.glb"></a-asset-item>
+    <a-asset-item id="rulerModel" src="assets/ruler.glb"></a-asset-item>
+    <a-asset-item id="metalRulerModel" src="assets/metal_ruler.glb"></a-asset-item>
   </a-assets>
 
   <!-- The raycaster will emit mouse events on scene objects specified with the cantap class -->
