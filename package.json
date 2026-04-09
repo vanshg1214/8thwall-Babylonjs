@@ -31,5 +31,8 @@
   },
   "dependencies": {
     "core-js": "^3.49.0"
+  },
+  "overrides": {
+    "core-js": "^3.49.0"
   }
 }
