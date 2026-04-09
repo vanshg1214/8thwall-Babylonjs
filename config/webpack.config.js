@@ -1,6 +1,7 @@
 const path = require('path')
 const HtmlWebpackPlugin = require('html-webpack-plugin')
 const CopyWebpackPlugin = require('copy-webpack-plugin')
+const TerserPlugin = require('terser-webpack-plugin')
 
 const rootPath = process.cwd()
 const distPath = path.join(rootPath, 'dist')
@@ -103,6 +104,14 @@ const config = {
       makeSassLoader(),
       makeAssetLoader(),
       makeDefaultHtmlLoader(),
+    ],
+  },
+  optimization: {
+    minimize: true,
+    minimizer: [
+      new TerserPlugin({
+        exclude: /[\\/]external[\\/]/,
+      }),
     ],
   },
   mode: 'production',
