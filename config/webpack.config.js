@@ -97,7 +97,7 @@ const config = {
   ],
   resolve: {extensions: ['.ts', '.js']},
   module: {
-    noParse: /external/, // Do not parse these files for dependencies
+    noParse: /[\\/]external[\\/]/, // Do not parse these files for dependencies
     rules: [
       makeJsLoader(),
       makeTsLoader(),
