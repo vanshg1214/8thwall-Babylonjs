@@ -111,7 +111,7 @@ const config = {
     minimize: true,
     minimizer: [
       new TerserPlugin({
-        exclude: /[\\/]external[\\/]/,
+        exclude: /external[\\/]/,
       }),
     ],
   },
