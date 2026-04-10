@@ -21,6 +21,7 @@
     "sass": "^1.94.2",
     "sass-loader": "^16.0.6",
     "style-loader": "^4.0.0",
+    "terser-webpack-plugin": "^5.4.0",
     "ts-essentials": "^9.3.2",
     "ts-loader": "^9.5.1",
     "ts-node": "^10.9.2",
