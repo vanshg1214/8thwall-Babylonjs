@@ -25,13 +25,13 @@ const makeJsLoader = () => ({
       plugins: ['@babel/plugin-transform-runtime'],
     },
   },
-  exclude: [/node_modules/, /[\\/]external[\\/]/],
+  exclude: [/node_modules/, /external/],
 })
 
 const makeTsLoader = () => ({
   test: /\.ts$/,
   loader: 'ts-loader',
-  exclude: [/node_modules/, /[\\/]external[\\/]/],
+  exclude: [/node_modules/, /external/],
 })
 
 const makeCssLoader = () => ({
@@ -97,6 +97,7 @@ const config = {
   ],
   resolve: {extensions: ['.ts', '.js']},
   module: {
+    noParse: /external/, // Do not parse these files for dependencies
     rules: [
       makeJsLoader(),
       makeTsLoader(),
@@ -134,6 +135,9 @@ const config = {
         errors: true,
       },
     },
+  },
+  performance: {
+    hints: false, // Silence asset size warnings that may be treated as errors in some environments
   },
 }
 
