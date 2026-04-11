@@ -215,7 +215,23 @@ const initBabylonScene = () => {
     } catch (e) { return null }
 
     if (!hits || hits.length === 0) return null
-    const best = hits.find(h => h.type === 'ESTIMATED_SURFACE_PLANE') || hits[0]
+
+    // STRICT FILTER: Prioritize mapped horizontal planes
+    let best = hits.find(h => h.type === 'ESTIMATED_SURFACE_PLANE')
+
+    if (!best) {
+      // Fallback: If no plane is found yet, use feature points but ONLY if they are below the camera
+      // This prevents placing models on ceilings or high walls.
+      const validFeaturePoints = hits.filter(h => camera && h.position.y < (camera.position.y - 0.5))
+      if (validFeaturePoints.length > 0) {
+        // Pick the lowest point found to approximate the floor
+        validFeaturePoints.sort((a, b) => a.position.y - b.position.y)
+        best = validFeaturePoints[0]
+      }
+    }
+
+    if (!best) return null // Reject taps that hit ceilings or mid-air
+
     return new BABYLON.Vector3(best.position.x, best.position.y, best.position.z)
   }
 
