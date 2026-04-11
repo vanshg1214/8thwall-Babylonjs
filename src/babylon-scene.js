@@ -16,9 +16,10 @@ const PRODUCTS = {
     hasConfigurator: true,
     prompt: 'Tap the floor to place the Fireplace',
   },
-  grill: {
+    grill: {
     model: 'assets/American outdoor grill.glb',
     targetMetres: 1.4,
+    scaleMultiplier: 2.2, // 220% bump requested to match real-world table scale
     hasConfigurator: false,
     prompt: 'Tap the floor to place the Grill',
   },
@@ -85,7 +86,6 @@ const initBabylonScene = () => {
           if (m.name !== '__root__' && (!m.parent || m.parent.name === '__root__')) {
             m.setParent(container)
           }
-          // Optimize: freeze materials so GPU doesn't re-compile shaders
           if (m.material) m.material.freeze()
         })
         meshes.forEach(m => m.computeWorldMatrix(true))
@@ -123,9 +123,11 @@ const initBabylonScene = () => {
         root.rotationQuaternion = null
         root.rotation.set(0, 0, 0)
 
-        // Scale to real-world size
+        // ── SCALE LOGIC (Normalized to Real-World Meters + Multiplier) ──
         const largestDim = Math.max(size.x, size.y, size.z) || 1
-        root.scaling.setAll(product.targetMetres / largestDim)
+        const multiplier = product.scaleMultiplier || 1.0
+        const finalScale = (product.targetMetres / largestDim) * multiplier
+        root.scaling.setAll(finalScale)
 
         container.parent = root
 
@@ -214,33 +216,27 @@ const initBabylonScene = () => {
       console.warn('[AR] HitTest error:', e)
     }
 
-    // 1. Try to find a confirmed surface plane first
+    // 1. Try to find a confirmed surface plane first (Horizontally mapped tables/floors)
     const planeHit = hits.find(h => h.type === 'ESTIMATED_SURFACE_PLANE')
     if (planeHit) {
       return new BABYLON.Vector3(planeHit.position.x, planeHit.position.y, planeHit.position.z)
     }
 
-    // 2. Fallback to feature points, but FILTER them so they are below the camera's height
-    // This prevents the "floating in mid-air/ceiling" issue
-    const validPoints = hits.filter(h => h.position.y < (camera.position.y - 0.5))
-    if (validPoints.length > 0) {
-      // Sort by distance to center or just take the first
-      const bestPoint = validPoints[0]
-      return new BABYLON.Vector3(bestPoint.position.x, bestPoint.position.y, bestPoint.position.z)
+    // 2. Fallback to feature points ONLY for initial placement
+    // (We reject them during dragging to avoid jumping into the air)
+    const isInteraction = currentAction === 'DRAGGING' || currentAction === 'PINCHING'
+    if (!isInteraction) {
+      const validPoints = hits.filter(h => h.position.y < (camera.position.y - 0.5))
+      if (validPoints.length > 0) {
+        return new BABYLON.Vector3(validPoints[0].position.x, validPoints[0].position.y, validPoints[0].position.z)
+      }
     }
 
-    // 3. ULTIMATE FALLBACK: If SLAM hasn't found anything (rare), raycast to a virtual floor
-    // at y=0 or slightly below the camera. This ensures it ALWAYS places on first tap.
+    // 3. ULTIMATE FALLBACK: Virtual floor at current altitude
     const ray = scene.createPickingRay(touchX - (rect.left), touchY - (rect.top), BABYLON.Matrix.Identity(), camera)
-    const virtualFloorY = 0 // Standard estimated ground
-    const vPlane = BABYLON.Plane.FromPositionAndNormal(new BABYLON.Vector3(0, virtualFloorY, 0), BABYLON.Vector3.Up())
+    const vPlane = BABYLON.Plane.FromPositionAndNormal(new BABYLON.Vector3(0, floorY || 0, 0), BABYLON.Vector3.Up())
     const dist = ray.intersectsPlane(vPlane)
-    
-    if (dist !== null) {
-      return ray.origin.add(ray.direction.scale(dist))
-    }
-
-    return null
+    return dist !== null ? ray.origin.add(ray.direction.scale(dist)) : null
   }
 
   // Math-only floor plane pick for dragging (no SLAM noise)
@@ -373,12 +369,9 @@ const initBabylonScene = () => {
       shadowCatcher.isVisible     = false
       shadowCatcher.isPickable    = false
 
-      const shadowMat = new BABYLON.StandardMaterial('shadowMat', scene)
-      shadowMat.alpha = 0.07 // Extremely subtle shadow
-      shadowMat.specularColor = new BABYLON.Color3(0, 0, 0)
-      shadowMat.diffuseColor  = new BABYLON.Color3(0, 0, 0)
-      shadowMat.useAlphaFromDiffuseTexture = true
-      shadowMat.transparencyMode = BABYLON.Material.MATERIAL_ALPHABLEND
+      const shadowMat = new BABYLON.ShadowOnlyMaterial('shadowMat', scene)
+      shadowMat.active = true
+      shadowMat.alpha = 0.4
       shadowMat.freeze()
       shadowCatcher.material = shadowMat
 
