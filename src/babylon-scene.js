@@ -196,10 +196,7 @@ const initBabylonScene = () => {
   function hitTestSLAM(touchX, touchY) {
     if (isDesktop) {
       const rect = canvas.getBoundingClientRect()
-      const ray  = scene.createPickingRay(
-        touchX - rect.left, touchY - rect.top,
-        BABYLON.Matrix.Identity(), camera
-      )
+      const ray  = scene.createPickingRay(touchX - rect.left, touchY - rect.top, BABYLON.Matrix.Identity(), camera)
       const plane = BABYLON.Plane.FromPositionAndNormal(BABYLON.Vector3.Zero(), BABYLON.Vector3.Up())
       const dist  = ray.intersectsPlane(plane)
       return dist !== null ? ray.origin.add(ray.direction.scale(dist)) : null
@@ -209,18 +206,41 @@ const initBabylonScene = () => {
     const nx = (touchX - rect.left) / rect.width
     const ny = (touchY - rect.top)  / rect.height
 
-    let hits = null
+    let hits = []
     try {
-      // STRICT FILTER: ONLY request actual tracked surface planes.
-      // This completely eliminates mid-air floating feature points.
-      hits = XR8.XrController.hitTest(nx, ny, ['ESTIMATED_SURFACE_PLANE'])
-    } catch (e) { return null }
+      // Allow both planes and feature points for instant responsiveness
+      hits = XR8.XrController.hitTest(nx, ny, ['ESTIMATED_SURFACE_PLANE', 'FEATURE_POINT'])
+    } catch (e) {
+      console.warn('[AR] HitTest error:', e)
+    }
 
-    if (!hits || hits.length === 0) return null
+    // 1. Try to find a confirmed surface plane first
+    const planeHit = hits.find(h => h.type === 'ESTIMATED_SURFACE_PLANE')
+    if (planeHit) {
+      return new BABYLON.Vector3(planeHit.position.x, planeHit.position.y, planeHit.position.z)
+    }
 
-    // Pick the most solid surface plane
-    let best = hits[0]
-    return new BABYLON.Vector3(best.position.x, best.position.y, best.position.z)
+    // 2. Fallback to feature points, but FILTER them so they are below the camera's height
+    // This prevents the "floating in mid-air/ceiling" issue
+    const validPoints = hits.filter(h => h.position.y < (camera.position.y - 0.5))
+    if (validPoints.length > 0) {
+      // Sort by distance to center or just take the first
+      const bestPoint = validPoints[0]
+      return new BABYLON.Vector3(bestPoint.position.x, bestPoint.position.y, bestPoint.position.z)
+    }
+
+    // 3. ULTIMATE FALLBACK: If SLAM hasn't found anything (rare), raycast to a virtual floor
+    // at y=0 or slightly below the camera. This ensures it ALWAYS places on first tap.
+    const ray = scene.createPickingRay(touchX - (rect.left), touchY - (rect.top), BABYLON.Matrix.Identity(), camera)
+    const virtualFloorY = 0 // Standard estimated ground
+    const vPlane = BABYLON.Plane.FromPositionAndNormal(new BABYLON.Vector3(0, virtualFloorY, 0), BABYLON.Vector3.Up())
+    const dist = ray.intersectsPlane(vPlane)
+    
+    if (dist !== null) {
+      return ray.origin.add(ray.direction.scale(dist))
+    }
+
+    return null
   }
 
   // Math-only floor plane pick for dragging (no SLAM noise)
