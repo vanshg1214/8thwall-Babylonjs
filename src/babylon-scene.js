@@ -1,17 +1,12 @@
 /**
- * Babylon.js + 8th Wall AR Scene — Rock-Solid Ground Placement
+ * Babylon.js + 8th Wall AR Scene — Stable & Optimized
  *
- * STABILITY ARCHITECTURE:
- * - Model is placed once in SLAM world-space and NEVER re-positioned automatically.
- * - Camera pose is synced from 8th Wall every frame (position + rotation + projection).
- * - The model stays fixed because it lives in the same world coordinate system.
- * - Floor Y is locked at placement time. All dragging uses a mathematical plane at that Y.
+ * STABILITY: Camera pose (position + rotation + projection) synced from
+ * 8th Wall every frame. Model root lives in the same world coordinate
+ * system, so it appears anchored to the real floor.
  *
- * INTERACTIONS (after placement):
- * - One finger drag: slides model on the locked floor plane
- * - Two finger pinch: scale up/down
- * - Two finger twist: rotate around Y axis
- * - Desktop: scroll to zoom, click-drag to move, right-click orbit
+ * PERFORMANCE: Reduced shadow map, hardware scaling on mobile,
+ * throttled DOM updates, simplified materials.
  */
 
 const PRODUCTS = {
@@ -34,80 +29,70 @@ function getActiveProduct() {
   return PRODUCTS[hash] || PRODUCTS.grill
 }
 
-// Suppress 8th Wall coaching/branding overlays
-;(function suppressXROverlays() {
+// Suppress 8th Wall overlays
+;(function () {
   const s = document.createElement('style')
   s.textContent = `
-    .prompt-box-8w, .prompt-button-8w, .coaching-overlay, [class*="coaching"],
-    [class*="surface-indicator"], [class*="xr-coaching"], [id*="coaching"],
-    canvas[data-xr="coaching"], .xr-grid, .xr8-grid, [class*="grid-overlay"],
-    img[src*="poweredby"], #poweredby, .poweredby-container {
+    .prompt-box-8w,.prompt-button-8w,.coaching-overlay,[class*="coaching"],
+    [class*="surface-indicator"],[class*="xr-coaching"],[id*="coaching"],
+    canvas[data-xr="coaching"],.xr-grid,.xr8-grid,[class*="grid-overlay"],
+    img[src*="poweredby"],#poweredby,.poweredby-container{
       display:none!important;opacity:0!important;pointer-events:none!important;
-    }
-  `
+    }`
   document.head.appendChild(s)
 })()
 
 const initBabylonScene = () => {
-  const canvas  = document.getElementById('renderCanvas')
+  const canvas   = document.getElementById('renderCanvas')
   const xrCanvas = document.getElementById('xrCanvas')
-  const product = getActiveProduct()
+  const product  = getActiveProduct()
 
   const isDesktop = !/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i
     .test(navigator.userAgent)
 
-  // ── Core scene state ──
-  let engine          = null
-  let scene           = null
-  let camera          = null
-  let shadowGenerator = null
-  let root            = null       // TransformNode anchoring model in world space
-  let shadowCatcher   = null
+  // ── State ──
+  let engine, scene, camera, shadowGenerator, shadowCatcher
+  let root            = null
   let hasPlaced       = false
   let modelSizeXYZ    = new BABYLON.Vector3(1, 1, 1)
-  let floorY          = 0          // locked world-Y of the floor after first hit
-  let projectionFrozen = false
+  let floorY          = 0
+  let lastMeasureTime = 0
 
-  // ── UI handles ──
+  // ── UI ──
   const promptEl              = document.getElementById('promptText')
   const measurementText       = document.getElementById('measurementText')
   const measurementsContainer = document.getElementById('measurementsContainer')
   if (promptEl) promptEl.textContent = product.prompt
 
-  // ═══════════════════════════════════════════════════════════════
-  // PLACE MODEL — called once after a successful SLAM hit test
-  // ═══════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════
+  // PLACE MODEL
+  // ═══════════════════════════════════════════════════════════
   function placeModel(worldPos) {
-    console.log('[AR] Placing model at world position:', worldPos.x.toFixed(3), worldPos.y.toFixed(3), worldPos.z.toFixed(3))
-
     floorY = worldPos.y
 
     BABYLON.SceneLoader.ImportMesh(
       '', '', encodeURI(product.model), scene,
       (meshes) => {
         if (!meshes || meshes.length === 0) {
-          console.warn('[AR] No meshes loaded')
           hasPlaced = false
           return
         }
 
-        // ── Container for measuring true geometry bounds ──
+        // Container at origin to measure bounds
         const container = new BABYLON.TransformNode('model-container', scene)
-        container.position.setAll(0)
-        container.rotationQuaternion = BABYLON.Quaternion.Identity()
-        container.scaling.setAll(1)
 
         meshes.forEach(m => {
           if (m.name !== '__root__' && (!m.parent || m.parent.name === '__root__')) {
             m.setParent(container)
           }
+          // Optimize: freeze materials so GPU doesn't re-compile shaders
+          if (m.material) m.material.freeze()
         })
         meshes.forEach(m => m.computeWorldMatrix(true))
 
-        // ── Compute visible geometry bounds ──
+        // Measure visible bounds
         let wMin = new BABYLON.Vector3(1e9, 1e9, 1e9)
         let wMax = new BABYLON.Vector3(-1e9, -1e9, -1e9)
-
         meshes.forEach(m => {
           if (!m.isVisible || m.visibility <= 0) return
           const nm = (m.name || '').toLowerCase()
@@ -117,8 +102,6 @@ const initBabylonScene = () => {
           wMin = BABYLON.Vector3.Minimize(wMin, bb.minimumWorld)
           wMax = BABYLON.Vector3.Maximize(wMax, bb.maximumWorld)
         })
-
-        // Fallback if all meshes were invisible
         if (wMin.x > 1e8) {
           meshes.forEach(m => {
             m.computeWorldMatrix(true)
@@ -131,47 +114,47 @@ const initBabylonScene = () => {
         const size   = wMax.subtract(wMin)
         const center = wMin.add(wMax).scale(0.5)
 
-        // Shift container so local origin = bottom-center of mesh
-        // When root.position = worldPos, model base sits ON the floor
+        // Shift so local origin = bottom-center
         container.position.set(-center.x, -wMin.y, -center.z)
 
-        // ── Root anchor — this is the ONLY thing that determines world position ──
+        // Root anchor at tap position
         root = new BABYLON.TransformNode('ar-root', scene)
         root.position.set(worldPos.x, worldPos.y, worldPos.z)
-        // Ensure we use euler-rotation (not quaternion) for clean Y-rotation
         root.rotationQuaternion = null
         root.rotation.set(0, 0, 0)
 
-        // Scale to target real-world size
+        // Scale to real-world size
         const largestDim = Math.max(size.x, size.y, size.z) || 1
-        const sf = product.targetMetres / largestDim
-        root.scaling.setAll(sf)
+        root.scaling.setAll(product.targetMetres / largestDim)
 
         container.parent = root
 
-        // Face camera on spawn
+        // Face camera
         if (camera) {
           const dx = camera.position.x - root.position.x
           const dz = camera.position.z - root.position.z
           root.rotation.y = Math.atan2(dx, dz)
         }
 
-        // Position shadow catcher at floor
+        // Shadow
         if (shadowCatcher) {
           shadowCatcher.position.y = worldPos.y
           shadowCatcher.isVisible  = true
         }
-
-        // Register shadow casters
         meshes.forEach(m => {
           if (m.getTotalVertices && m.getTotalVertices() > 0 && m.isVisible) {
             shadowGenerator.addShadowCaster(m, true)
           }
         })
 
+        // Optimize: freeze mesh world matrices that won't change
+        meshes.forEach(m => {
+          if (m.isVisible) m.freezeWorldMatrix()
+        })
+
         modelSizeXYZ = size.clone()
 
-        // Update UI
+        // UI
         if (promptEl) promptEl.style.display = 'none'
         if (measurementsContainer) {
           measurementsContainer.style.display = 'block'
@@ -183,8 +166,6 @@ const initBabylonScene = () => {
           clrCtls.style.display = 'flex'
           setupColorButtons(meshes)
         }
-
-        console.log('[AR] Model placed and anchored. Scale:', sf.toFixed(4), 'FloorY:', floorY.toFixed(4))
       }
     )
   }
@@ -199,7 +180,9 @@ const initBabylonScene = () => {
           if (m.material && m.material.albedoColor) {
             const ln = (m.name || '').toLowerCase()
             if (!ln.includes('glass') && !ln.includes('fire')) {
+              m.material.unfreeze()
               m.material.albedoColor = BABYLON.Color3.FromHexString(hex)
+              m.material.freeze()
             }
           }
         })
@@ -207,11 +190,9 @@ const initBabylonScene = () => {
     })
   }
 
-  // ═══════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════
   // HIT TESTING
-  // ═══════════════════════════════════════════════════════════════
-
-  // SLAM hit test for initial placement — returns BABYLON.Vector3 or null
+  // ═══════════════════════════════════════════════════════════
   function hitTestSLAM(touchX, touchY) {
     if (isDesktop) {
       const rect = canvas.getBoundingClientRect()
@@ -224,7 +205,6 @@ const initBabylonScene = () => {
       return dist !== null ? ray.origin.add(ray.direction.scale(dist)) : null
     }
 
-    // 8th Wall normalised coords — use xrCanvas since that's where 8th Wall runs
     const rect = xrCanvas.getBoundingClientRect()
     const nx = (touchX - rect.left) / rect.width
     const ny = (touchY - rect.top)  / rect.height
@@ -232,19 +212,14 @@ const initBabylonScene = () => {
     let hits = null
     try {
       hits = XR8.XrController.hitTest(nx, ny, ['ESTIMATED_SURFACE_PLANE', 'FEATURE_POINT'])
-    } catch (e) {
-      console.warn('[AR] hitTest error:', e)
-      return null
-    }
+    } catch (e) { return null }
 
     if (!hits || hits.length === 0) return null
-
-    // Prefer a confirmed surface, fall back to feature points
     const best = hits.find(h => h.type === 'ESTIMATED_SURFACE_PLANE') || hits[0]
     return new BABYLON.Vector3(best.position.x, best.position.y, best.position.z)
   }
 
-  // Mathematical ray-vs-plane for smooth dragging (no SLAM noise)
+  // Math-only floor plane pick for dragging (no SLAM noise)
   function pickFloorPlane(screenX, screenY) {
     if (!scene || !camera) return null
     const rect = canvas.getBoundingClientRect()
@@ -259,9 +234,25 @@ const initBabylonScene = () => {
     return dist !== null ? ray.origin.add(ray.direction.scale(dist)) : null
   }
 
-  // ═══════════════════════════════════════════════════════════════
+  // Unfreeze all model meshes (needed before moving root)
+  function unfreezeModel() {
+    if (!root) return
+    root.getChildMeshes(false).forEach(m => m.unfreezeWorldMatrix())
+  }
+
+  // Re-freeze all model meshes (after interaction ends)
+  function freezeModel() {
+    if (!root) return
+    root.computeWorldMatrix(true)
+    root.getChildMeshes(false).forEach(m => {
+      m.computeWorldMatrix(true)
+      m.freezeWorldMatrix()
+    })
+  }
+
+  // ═══════════════════════════════════════════════════════════
   // 8TH WALL PIPELINE MODULE
-  // ═══════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════
   const babylonPipelineModule = {
     name: 'babylonjs-bridge',
 
@@ -270,29 +261,45 @@ const initBabylonScene = () => {
         preserveDrawingBuffer: true,
         stencil: true,
         alpha: true,
-        antialias: true,
+        antialias: !isDesktop ? false : true, // save GPU on mobile
       })
+
+      // Mobile performance: render at lower resolution
+      if (!isDesktop) {
+        engine.setHardwareScalingLevel(2) // half resolution = 4x faster
+      }
 
       scene = new BABYLON.Scene(engine)
       scene.useRightHandedSystem = true
       scene.autoClear  = false
       scene.clearColor = new BABYLON.Color4(0, 0, 0, 0)
 
-      // Clear before each frame to ensure transparent overlay
+      // Performance: skip unnecessary features
+      scene.skipPointerMovePicking = true
+      scene.autoClearDepthAndStencil = false
+
       scene.onBeforeRenderObservable.add(() => {
         engine.clear(new BABYLON.Color4(0, 0, 0, 0), true, true, true)
 
-        // Live measurements
-        if (!root || !measurementText) return
-        const sx = (modelSizeXYZ.x * root.scaling.x).toFixed(2)
-        const sy = (modelSizeXYZ.y * root.scaling.y).toFixed(2)
-        const sz = (modelSizeXYZ.z * root.scaling.z).toFixed(2)
-        measurementText.innerHTML = `<span>SIZE: ${sx}m × ${sy}m × ${sz}m</span>`
+        // Throttle DOM updates to every 500ms (not every frame!)
+        if (root && measurementText) {
+          const now = performance.now()
+          if (now - lastMeasureTime > 500) {
+            lastMeasureTime = now
+            const sx = (modelSizeXYZ.x * root.scaling.x).toFixed(2)
+            const sy = (modelSizeXYZ.y * root.scaling.y).toFixed(2)
+            const sz = (modelSizeXYZ.z * root.scaling.z).toFixed(2)
+            measurementText.textContent = `SIZE: ${sx}m × ${sy}m × ${sz}m`
+          }
+        }
       })
 
       // ── Camera ──
       if (isDesktop) {
-        camera = new BABYLON.ArcRotateCamera('arcCam', -Math.PI / 2, Math.PI / 2.5, 5, BABYLON.Vector3.Zero(), scene)
+        camera = new BABYLON.ArcRotateCamera(
+          'arcCam', -Math.PI / 2, Math.PI / 2.5, 5,
+          BABYLON.Vector3.Zero(), scene
+        )
         camera.attachControl(canvas, true)
         camera.wheelPrecision   = 50
         camera.lowerRadiusLimit = 0.3
@@ -300,24 +307,26 @@ const initBabylonScene = () => {
       } else {
         camera = new BABYLON.FreeCamera('cam', BABYLON.Vector3.Zero(), scene)
         camera.rotationQuaternion = new BABYLON.Quaternion()
-        // Detach any default camera input on mobile — 8th Wall drives the camera
-        camera.detachControl()
+        // IMPORTANT: detach default controls so Babylon doesn't fight 8th Wall
+        camera.inputs.clear()
       }
-      camera.minZ = 0.01
-      camera.maxZ = 1000
+      camera.minZ = 0.05
+      camera.maxZ = 500
 
       // ── Lighting ──
       const hemi = new BABYLON.HemisphericLight('hemi', new BABYLON.Vector3(0, 1, 0), scene)
-      hemi.intensity = 0.6
+      hemi.intensity = 0.7
 
       const dir = new BABYLON.DirectionalLight('dir', new BABYLON.Vector3(-1, -2, -1), scene)
-      dir.position  = new BABYLON.Vector3(20, 60, 20)
-      dir.intensity = 1.2
+      dir.position  = new BABYLON.Vector3(5, 10, 5)
+      dir.intensity = 1.0
 
       try {
-        const envMap = BABYLON.CubeTexture.CreateFromPrefilteredData('assets/sanGiuseppeBridge.env', scene)
+        const envMap = BABYLON.CubeTexture.CreateFromPrefilteredData(
+          'assets/sanGiuseppeBridge.env', scene
+        )
         scene.environmentTexture   = envMap
-        scene.environmentIntensity = 1.0
+        scene.environmentIntensity = 0.8
       } catch (e) {
         console.warn('[AR] Env map load failed', e)
       }
@@ -326,48 +335,33 @@ const initBabylonScene = () => {
       scene.imageProcessingConfiguration.toneMappingType =
         BABYLON.ImageProcessingConfiguration.TONEMAPPING_ACES
 
-      // ── Shadows ──
-      shadowGenerator = new BABYLON.ShadowGenerator(2048, dir)
-      shadowGenerator.useBlurExponentialShadowMap = true
-      shadowGenerator.blurKernel  = 32
-      shadowGenerator.bias        = 0.0001
+      // ── Shadows (optimized for mobile) ──
+      shadowGenerator = new BABYLON.ShadowGenerator(512, dir)  // 512 not 2048!
+      shadowGenerator.useExponentialShadowMap = true  // simpler than blur ESM
+      shadowGenerator.bias        = 0.001
       shadowGenerator.normalBias  = 0.02
 
-      shadowCatcher = BABYLON.MeshBuilder.CreatePlane('shadow-catcher', { size: 1000 }, scene)
-      shadowCatcher.rotation.x    = Math.PI / 2
+      shadowCatcher = BABYLON.MeshBuilder.CreateGround(
+        'shadow-catcher', { width: 50, height: 50 }, scene
+      )
       shadowCatcher.position.y    = 0
       shadowCatcher.receiveShadows = true
       shadowCatcher.isVisible     = false
       shadowCatcher.isPickable    = false
 
-      let shadowMat
-      if (typeof BABYLON.ShadowOnlyMaterial !== 'undefined') {
-        shadowMat = new BABYLON.ShadowOnlyMaterial('shadowMat', scene)
-      } else {
-        shadowMat = new BABYLON.StandardMaterial('shadowMat', scene)
-        shadowMat.alpha = 0.08
-        shadowMat.specularColor = new BABYLON.Color3(0, 0, 0)
-      }
+      const shadowMat = new BABYLON.StandardMaterial('shadowMat', scene)
+      shadowMat.alpha         = 0.15
+      shadowMat.specularColor = new BABYLON.Color3(0, 0, 0)
+      shadowMat.diffuseColor  = new BABYLON.Color3(0, 0, 0)
+      shadowMat.freeze()
       shadowCatcher.material = shadowMat
 
       // ═════════════════════════════════════════════════════════
-      // TOUCH / POINTER INTERACTION SYSTEM
-      //
-      // On mobile:
-      //   Before placement: tap = place model
-      //   After  placement: 1-finger drag = slide on floor
-      //                     2-finger pinch = scale
-      //                     2-finger twist = rotate
-      //
-      // On desktop:
-      //   Before placement: click = place model
-      //   After  placement: left-drag on model = slide
-      //                     scroll on model = zoom
-      //                     ArcRotate camera handles orbit otherwise
+      // INTERACTIONS
       // ═════════════════════════════════════════════════════════
-      let currentAction     = null   // null | 'DRAGGING' | 'PINCHING'
+      let currentAction     = null
       let activePointers    = new Map()
-      let dragOffset        = new BABYLON.Vector3(0, 0, 0)
+      let dragOffset        = new BABYLON.Vector3()
       let initialPinchDist  = 0
       let initialPinchScale = 1
       let initialPinchAngle = 0
@@ -376,13 +370,17 @@ const initBabylonScene = () => {
       let pointerDownY      = 0
       let pointerDownTime   = 0
 
-      // Desktop scroll-to-zoom on model
-      canvas.addEventListener('wheel', ev => {
-        if (!root) return
-        ev.preventDefault()
-        const factor = ev.deltaY > 0 ? 0.92 : 1.09
-        root.scaling.setAll(Math.max(root.scaling.x * factor, 0.05))
-      }, { passive: false })
+      // Desktop zoom
+      if (isDesktop) {
+        canvas.addEventListener('wheel', ev => {
+          if (!root) return
+          ev.preventDefault()
+          const f = ev.deltaY > 0 ? 0.92 : 1.09
+          unfreezeModel()
+          root.scaling.setAll(Math.max(root.scaling.x * f, 0.05))
+          freezeModel()
+        }, { passive: false })
+      }
 
       scene.onPointerObservable.add(info => {
         const ev  = info.event
@@ -390,35 +388,33 @@ const initBabylonScene = () => {
 
         switch (info.type) {
 
-          // ── POINTER DOWN ──
           case BABYLON.PointerEventTypes.POINTERDOWN: {
             activePointers.set(pid, { x: ev.clientX, y: ev.clientY })
             pointerDownX    = ev.clientX
             pointerDownY    = ev.clientY
             pointerDownTime = Date.now()
 
-            if (!root) break  // model not placed yet, wait for tap-up
+            if (!root) break
 
             if (activePointers.size === 1) {
-              // Start DRAGGING — on mobile we don't require hit-testing the model
-              // since accuracy is low on phones; any 1-finger drag moves the model
               currentAction = 'DRAGGING'
-              if (isDesktop && camera.detachControl) camera.detachControl(canvas)
-
+              unfreezeModel()
+              if (isDesktop && camera.detachControl) camera.detachControl()
               const gp = pickFloorPlane(ev.clientX, ev.clientY)
               if (gp) {
-                dragOffset.copyFrom(root.position.subtract(gp))
-                dragOffset.y = 0
+                dragOffset.set(
+                  root.position.x - gp.x,
+                  0,
+                  root.position.z - gp.z
+                )
               } else {
                 dragOffset.setAll(0)
               }
-
             } else if (activePointers.size === 2) {
-              // Switch to PINCHING (scale + rotate)
               currentAction = 'PINCHING'
-              const pts         = Array.from(activePointers.values())
-              const dx          = pts[1].x - pts[0].x
-              const dy          = pts[1].y - pts[0].y
+              const pts = Array.from(activePointers.values())
+              const dx  = pts[1].x - pts[0].x
+              const dy  = pts[1].y - pts[0].y
               initialPinchDist  = Math.hypot(dx, dy)
               initialPinchScale = root.scaling.x
               initialPinchAngle = Math.atan2(dy, dx)
@@ -427,7 +423,6 @@ const initBabylonScene = () => {
             break
           }
 
-          // ── POINTER MOVE ──
           case BABYLON.PointerEventTypes.POINTERMOVE: {
             if (!root || !currentAction) break
             if (activePointers.has(pid)) {
@@ -436,65 +431,59 @@ const initBabylonScene = () => {
 
             if (currentAction === 'DRAGGING' && activePointers.size === 1) {
               const moved = Math.hypot(ev.clientX - pointerDownX, ev.clientY - pointerDownY)
-              if (moved > 8) {
+              if (moved > 10) {
                 const gp = pickFloorPlane(ev.clientX, ev.clientY)
                 if (gp) {
                   root.position.x = gp.x + dragOffset.x
                   root.position.z = gp.z + dragOffset.z
-                  // Y stays locked at floorY — never changes
+                  // Y NEVER changes
                 }
               }
             } else if (currentAction === 'PINCHING' && activePointers.size === 2) {
-              const pts   = Array.from(activePointers.values())
-              const dx    = pts[1].x - pts[0].x
-              const dy    = pts[1].y - pts[0].y
+              const pts = Array.from(activePointers.values())
+              const dx  = pts[1].x - pts[0].x
+              const dy  = pts[1].y - pts[0].y
               const dist  = Math.hypot(dx, dy)
               const angle = Math.atan2(dy, dx)
 
-              // Scale
               if (initialPinchDist > 10) {
-                const rawScale = initialPinchScale * (dist / initialPinchDist)
-                root.scaling.setAll(Math.max(0.05, Math.min(rawScale, 10)))
+                const s = initialPinchScale * (dist / initialPinchDist)
+                root.scaling.setAll(Math.max(0.05, Math.min(s, 10)))
               }
-              // Rotate
               root.rotation.y = initialRotY + (initialPinchAngle - angle)
             }
             break
           }
 
-          // ── POINTER UP ──
           case BABYLON.PointerEventTypes.POINTERUP:
           case BABYLON.PointerEventTypes.POINTEROUT: {
             activePointers.delete(pid)
 
-            // 2→1 finger: transition from pinch to drag seamlessly
             if (activePointers.size === 1 && currentAction === 'PINCHING') {
               currentAction = 'DRAGGING'
               const rem = Array.from(activePointers.values())[0]
               const gp  = pickFloorPlane(rem.x, rem.y)
               if (gp) {
-                dragOffset.copyFrom(root.position.subtract(gp))
-                dragOffset.y = 0
+                dragOffset.set(root.position.x - gp.x, 0, root.position.z - gp.z)
               }
               break
             }
 
             if (activePointers.size === 0) {
+              // Re-freeze meshes after interaction
+              if (currentAction) freezeModel()
+
               const travel  = Math.hypot(ev.clientX - pointerDownX, ev.clientY - pointerDownY)
               const elapsed = Date.now() - pointerDownTime
               const wasTap  = travel < 20 && elapsed < 500
 
-              // ── TAP TO PLACE (only before model is placed) ──
               if (wasTap && !hasPlaced && currentAction !== 'PINCHING') {
                 const worldHit = hitTestSLAM(ev.clientX, ev.clientY)
                 if (worldHit) {
                   hasPlaced = true
                   placeModel(worldHit)
-                } else {
-                  console.warn('[AR] No floor detected — scan more of the surface')
-                  if (promptEl) {
-                    promptEl.textContent = 'Slowly scan the floor, then tap again'
-                  }
+                } else if (promptEl) {
+                  promptEl.textContent = 'Slowly scan the floor, then tap again'
                 }
               }
 
@@ -507,48 +496,40 @@ const initBabylonScene = () => {
       })
     },
 
-    // ═════════════════════════════════════════════════════════════
-    // CAMERA SYNC — 8th Wall feeds position/rotation/projection
+    // ═════════════════════════════════════════════════════════
+    // CAMERA SYNC — EVERY FRAME from 8th Wall
     //
-    // CRITICAL FOR STABILITY:
-    // - We update the camera's VIEW (pos + rot) every frame from SLAM
-    // - We freeze the PROJECTION matrix from 8th Wall's intrinsics
-    // - The model root lives in the SAME world coordinate system
-    // - Therefore the model appears perfectly anchored in reality
-    // ═════════════════════════════════════════════════════════════
+    // This is the key to stability: position, rotation, AND
+    // projection are all updated every frame so that the Babylon
+    // camera perfectly matches the physical phone camera.
+    // The model root stays at its fixed world coordinates.
+    // ═════════════════════════════════════════════════════════
     onUpdate: ({ processCpuResult }) => {
       if (!scene || !camera || isDesktop) return
 
       const { reality } = processCpuResult
       if (!reality) return
 
-      // Sync camera position from SLAM
+      // Sync position
       if (reality.position) {
-        camera.position.set(
-          reality.position.x,
-          reality.position.y,
-          reality.position.z
-        )
+        camera.position.x = reality.position.x
+        camera.position.y = reality.position.y
+        camera.position.z = reality.position.z
       }
 
-      // Sync camera rotation from SLAM
+      // Sync rotation
       if (reality.rotation) {
-        camera.rotationQuaternion.set(
-          reality.rotation.x,
-          reality.rotation.y,
-          reality.rotation.z,
-          reality.rotation.w
-        )
+        camera.rotationQuaternion.x = reality.rotation.x
+        camera.rotationQuaternion.y = reality.rotation.y
+        camera.rotationQuaternion.z = reality.rotation.z
+        camera.rotationQuaternion.w = reality.rotation.w
       }
 
-      // Set projection matrix from device intrinsics (only once, then frozen)
+      // Sync projection — MUST update every frame, not just once!
       if (reality.intrinsics) {
-        if (!projectionFrozen) {
-          camera.freezeProjectionMatrix(
-            BABYLON.Matrix.FromArray(reality.intrinsics)
-          )
-          projectionFrozen = true
-        }
+        camera.freezeProjectionMatrix(
+          BABYLON.Matrix.FromArray(reality.intrinsics)
+        )
       }
     },
 
@@ -558,8 +539,6 @@ const initBabylonScene = () => {
 
     onCanvasSizeChange: ({ canvasWidth, canvasHeight }) => {
       if (engine) engine.setSize(canvasWidth, canvasHeight)
-      // If canvas resizes, allow projection to re-freeze with new intrinsics
-      projectionFrozen = false
     },
   }
 
