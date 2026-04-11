@@ -211,27 +211,15 @@ const initBabylonScene = () => {
 
     let hits = null
     try {
-      hits = XR8.XrController.hitTest(nx, ny, ['ESTIMATED_SURFACE_PLANE', 'FEATURE_POINT'])
+      // STRICT FILTER: ONLY request actual tracked surface planes.
+      // This completely eliminates mid-air floating feature points.
+      hits = XR8.XrController.hitTest(nx, ny, ['ESTIMATED_SURFACE_PLANE'])
     } catch (e) { return null }
 
     if (!hits || hits.length === 0) return null
 
-    // STRICT FILTER: Prioritize mapped horizontal planes
-    let best = hits.find(h => h.type === 'ESTIMATED_SURFACE_PLANE')
-
-    if (!best) {
-      // Fallback: If no plane is found yet, use feature points but ONLY if they are below the camera
-      // This prevents placing models on ceilings or high walls.
-      const validFeaturePoints = hits.filter(h => camera && h.position.y < (camera.position.y - 0.5))
-      if (validFeaturePoints.length > 0) {
-        // Pick the lowest point found to approximate the floor
-        validFeaturePoints.sort((a, b) => a.position.y - b.position.y)
-        best = validFeaturePoints[0]
-      }
-    }
-
-    if (!best) return null // Reject taps that hit ceilings or mid-air
-
+    // Pick the most solid surface plane
+    let best = hits[0]
     return new BABYLON.Vector3(best.position.x, best.position.y, best.position.z)
   }
 
@@ -514,11 +502,6 @@ const initBabylonScene = () => {
 
     // ═════════════════════════════════════════════════════════
     // CAMERA SYNC — EVERY FRAME from 8th Wall
-    //
-    // This is the key to stability: position, rotation, AND
-    // projection are all updated every frame so that the Babylon
-    // camera perfectly matches the physical phone camera.
-    // The model root stays at its fixed world coordinates.
     // ═════════════════════════════════════════════════════════
     onUpdate: ({ processCpuResult }) => {
       if (!scene || !camera || isDesktop) return
@@ -541,11 +524,15 @@ const initBabylonScene = () => {
         camera.rotationQuaternion.w = reality.rotation.w
       }
 
-      // Sync projection — MUST update every frame, not just once!
+      // Sync projection ONLY when it actually changes to stop phone freezes!
       if (reality.intrinsics) {
-        camera.freezeProjectionMatrix(
-          BABYLON.Matrix.FromArray(reality.intrinsics)
-        )
+        const intrinsicsStr = reality.intrinsics.join(',')
+        if (camera._lastIntrinsics !== intrinsicsStr) {
+          camera._lastIntrinsics = intrinsicsStr
+          camera.freezeProjectionMatrix(
+            BABYLON.Matrix.FromArray(reality.intrinsics)
+          )
+        }
       }
     },
 
