@@ -366,7 +366,7 @@ const initBabylonScene = () => {
       shadowGenerator.normalBias  = 0.02
 
       shadowCatcher = BABYLON.MeshBuilder.CreateGround(
-        'shadow-catcher', { width: 50, height: 50 }, scene
+        'shadow-catcher', { width: 10, height: 10 }, scene
       )
       shadowCatcher.position.y    = 0
       shadowCatcher.receiveShadows = true
@@ -374,9 +374,11 @@ const initBabylonScene = () => {
       shadowCatcher.isPickable    = false
 
       const shadowMat = new BABYLON.StandardMaterial('shadowMat', scene)
-      shadowMat.alpha         = 0.15
+      shadowMat.alpha = 0.07 // Extremely subtle shadow
       shadowMat.specularColor = new BABYLON.Color3(0, 0, 0)
       shadowMat.diffuseColor  = new BABYLON.Color3(0, 0, 0)
+      shadowMat.useAlphaFromDiffuseTexture = true
+      shadowMat.transparencyMode = BABYLON.Material.MATERIAL_ALPHABLEND
       shadowMat.freeze()
       shadowCatcher.material = shadowMat
 
@@ -456,11 +458,31 @@ const initBabylonScene = () => {
             if (currentAction === 'DRAGGING' && activePointers.size === 1) {
               const moved = Math.hypot(ev.clientX - pointerDownX, ev.clientY - pointerDownY)
               if (moved > 10) {
-                const gp = pickFloorPlane(ev.clientX, ev.clientY)
-                if (gp) {
-                  root.position.x = gp.x + dragOffset.x
-                  root.position.z = gp.z + dragOffset.z
-                  // Y NEVER changes
+                // Perform a REAL SLAM hit-test during drag for surface snapping (falling off bed to floor)
+                const hit = hitTestSLAM(ev.clientX, ev.clientY)
+                if (hit) {
+                  // X and Z follow the finger
+                  root.position.x = hit.x
+                  root.position.z = hit.z
+                  
+                  // Y snaps to the surface found (Gravity/Snapping behavior)
+                  // We use a small lerp for Y to prevent jitter if feature points jump
+                  root.position.y = BABYLON.Scalar.Lerp(root.position.y, hit.y, 0.2)
+                  floorY = root.position.y // Update current floor level
+                } else {
+                  // Fallback: Use math plane if SLAM tracking is lost temporarily
+                  const gp = pickFloorPlane(ev.clientX, ev.clientY)
+                  if (gp) {
+                    root.position.x = gp.x
+                    root.position.z = gp.z
+                  }
+                }
+
+                // Ensure shadows follow the model's new position and height
+                if (shadowCatcher) {
+                  shadowCatcher.position.x = root.position.x
+                  shadowCatcher.position.z = root.position.z
+                  shadowCatcher.position.y = root.position.y
                 }
               }
             } else if (currentAction === 'PINCHING' && activePointers.size === 2) {
