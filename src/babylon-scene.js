@@ -374,12 +374,9 @@ const initBabylonScene = () => {
       const pts = Array.from(touches.values())
 
       if (currentAction === 'DRAGGING' && pts.length === 1) {
-        const moved = Math.hypot(pts[0].x - touchStartX, pts[0].y - touchStartY)
-        if (moved > 10) {
-          // DISABLED LATERAL DRAGGING: Per user request, the model should simply lock
-          // safely on the floor. Dragging across is ignored to prevent mistakes.
-          e.preventDefault()
-        }
+        // Unconditionally kill 1-finger dragging
+        e.preventDefault()
+        e.stopPropagation()
       } else if (currentAction === 'PINCHING' && pts.length >= 2) {
         const dx    = pts[1].x - pts[0].x
         const dy    = pts[1].y - pts[0].y
