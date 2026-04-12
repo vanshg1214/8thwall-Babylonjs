@@ -167,21 +167,7 @@ const initBabylonScene = () => {
     return dist !== null ? ray.origin.add(ray.direction.scale(dist)) : null
   }
 
-  // Unfreeze all model meshes (needed before moving root)
-  function unfreezeModel() {
-    if (!root) return
-    root.getChildMeshes(false).forEach(m => m.unfreezeWorldMatrix())
-  }
-
-  // Re-freeze all model meshes (after interaction ends)
-  function freezeModel() {
-    if (!root) return
-    root.computeWorldMatrix(true)
-    root.getChildMeshes(false).forEach(m => {
-      m.computeWorldMatrix(true)
-      m.freezeWorldMatrix()
-    })
-  }
+  // (Removed freeze/unfreeze functions to fix pivot bugs)
 
   // ═══════════════════════════════════════════════════════════
   // PLACE MODEL
@@ -208,7 +194,9 @@ const initBabylonScene = () => {
           if (m.name !== '__root__' && (!m.parent || m.parent.name === '__root__')) {
             m.setParent(container)
           }
-          if (m.material) m.material.freeze()
+          if (m.material) {
+            // (Removed material freeze here to ensure dynamic rendering compatibility)
+          }
         })
         meshes.forEach(m => m.computeWorldMatrix(true))
 
@@ -277,10 +265,9 @@ const initBabylonScene = () => {
           })
         }
 
-        // Optimize: freeze meshes that won't change
+        // (Removed explicit freezing here as well)
         meshes.forEach(m => {
           if (m.isVisible) {
-            m.freezeWorldMatrix()
             m.isPickable = false // PERFORMANCE: Disable picking on individual complex meshes
           }
         })
@@ -318,9 +305,7 @@ const initBabylonScene = () => {
           if (m.material && m.material.albedoColor) {
             const ln = (m.name || '').toLowerCase()
             if (!ln.includes('glass') && !ln.includes('fire')) {
-              m.material.unfreeze()
               m.material.albedoColor = BABYLON.Color3.FromHexString(hex)
-              m.material.freeze()
             }
           }
         })
@@ -361,7 +346,6 @@ const initBabylonScene = () => {
       // Begin gesture recognition
       if (root && touches.size === 1) {
         currentAction = 'DRAGGING'
-        unfreezeModel()
       } else if (root && touches.size >= 2) {
         currentAction = 'PINCHING'
         const pts = Array.from(touches.values())
@@ -464,8 +448,7 @@ const initBabylonScene = () => {
           }
         }
 
-        // Re-freeze meshes after interaction
-        if (currentAction && root) freezeModel()
+        // Re-freeze disabled
         currentAction = null
       }
     }, { passive: true })
@@ -473,7 +456,6 @@ const initBabylonScene = () => {
     // Clean up on cancel
     targetEl.addEventListener('touchcancel', () => {
       touches.clear()
-      if (currentAction && root) freezeModel()
       currentAction = null
     }, { passive: true })
 
@@ -492,9 +474,7 @@ const initBabylonScene = () => {
         if (!root) return
         ev.preventDefault()
         const f = ev.deltaY > 0 ? 0.92 : 1.09
-        unfreezeModel()
         root.scaling.setAll(Math.max(root.scaling.x * f, 0.05))
-        freezeModel()
       }, { passive: false })
     }
   }
@@ -529,7 +509,6 @@ const initBabylonScene = () => {
       scene.skipPointerUpPicking = true
       scene.autoClearDepthAndStencil = false
       scene.blockMaterialDirtyMechanism = true // Freeze materials globally
-      if (!isDesktop) BABYLON.SceneOptimizer.OptimizeAsync(scene)
 
       scene.onBeforeRenderObservable.add(() => {
         engine.clear(new BABYLON.Color4(0, 0, 0, 0), true, true, true)
