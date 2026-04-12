@@ -392,29 +392,30 @@ const initBabylonScene = () => {
       if (currentAction === 'DRAGGING' && pts.length === 1) {
         const moved = Math.hypot(pts[0].x - touchStartX, pts[0].y - touchStartY)
         if (moved > 10) {
-          // Use math-only floor plane for smooth, stable dragging
-          const gp = pickFloorPlane(pts[0].x, pts[0].y)
-          if (gp) {
-            root.position.x = gp.x
-            root.position.z = gp.z
-            // Y stays locked to floorY — no SLAM jitter during drag
-          }
-          if (shadowCatcher) {
-            shadowCatcher.position.x = root.position.x
-            shadowCatcher.position.z = root.position.z
-          }
+          // DISABLED LATERAL DRAGGING: Per user request, the model should simply lock
+          // safely on the floor. Dragging across is ignored to prevent mistakes.
+          e.preventDefault()
         }
-        e.preventDefault()
       } else if (currentAction === 'PINCHING' && pts.length >= 2) {
         const dx    = pts[1].x - pts[0].x
         const dy    = pts[1].y - pts[0].y
         const dist  = Math.hypot(dx, dy)
         const angle = Math.atan2(dy, dx)
 
-        // Scale (ratio-based, no drift)
+        // Scale (Stepped scaling to perfectly round increments of 0.1m)
         if (initialPinchDist > 10) {
-          const s = initialPinchScale * (dist / initialPinchDist)
-          root.scaling.setAll(Math.max(0.05, Math.min(s, 10)))
+          const rawScale = initialPinchScale * (dist / initialPinchDist)
+          
+          // Find the theoretical width based on standard smooth scaling
+          const rawWidth = modelSizeXYZ.x * rawScale
+          
+          // Snap that width to the nearest 10cm (0.1m, e.g. 1.5, 1.6, 1.7)
+          const snappedWidth = Math.round(rawWidth * 10) / 10
+          
+          // Apply a scale that exactly matches that snapped width
+          let finalScale = snappedWidth / modelSizeXYZ.x
+          finalScale = Math.max(0.05, Math.min(finalScale, 10))
+          root.scaling.setAll(finalScale)
         }
 
         // Rotation
@@ -533,10 +534,10 @@ const initBabylonScene = () => {
       scene.onBeforeRenderObservable.add(() => {
         engine.clear(new BABYLON.Color4(0, 0, 0, 0), true, true, true)
 
-        // Throttle measurement DOM updates to every 500ms
+        // Throttle measurement DOM updates (100ms for instant feedback during stepped scale)
         if (root && measurementText) {
           const now = performance.now()
-          if (now - lastMeasureTime > 500) {
+          if (now - lastMeasureTime > 100) {
             lastMeasureTime = now
             const sx = (modelSizeXYZ.x * root.scaling.x).toFixed(2)
             const sy = (modelSizeXYZ.y * root.scaling.y).toFixed(2)
