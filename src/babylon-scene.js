@@ -222,19 +222,21 @@ const initBabylonScene = () => {
       return new BABYLON.Vector3(planeHit.position.x, planeHit.position.y, planeHit.position.z)
     }
 
-    // 2. Fallback to feature points ONLY for initial placement
-    // (We reject them during dragging to avoid jumping into the air)
+    // 2. Fallback to feature points
+    // Prioritize them for initial placement (hasPlaced = false)
+    // During dragging, we only allow them if they are below camera height to prevent mid-air jumps
     const isInteraction = currentAction === 'DRAGGING' || currentAction === 'PINCHING'
-    if (!isInteraction) {
+    if (!hasPlaced || isInteraction) {
       const validPoints = hits.filter(h => h.position.y < (camera.position.y - 0.5))
       if (validPoints.length > 0) {
         return new BABYLON.Vector3(validPoints[0].position.x, validPoints[0].position.y, validPoints[0].position.z)
       }
     }
 
-    // 3. ULTIMATE FALLBACK: Virtual floor at current altitude
+    // 3. ULTIMATE FALLBACK: Virtual floor at current altitude or y=0
     const ray = scene.createPickingRay(touchX - (rect.left), touchY - (rect.top), BABYLON.Matrix.Identity(), camera)
-    const vPlane = BABYLON.Plane.FromPositionAndNormal(new BABYLON.Vector3(0, floorY || 0, 0), BABYLON.Vector3.Up())
+    const yTarget = hasPlaced ? floorY : 0
+    const vPlane = BABYLON.Plane.FromPositionAndNormal(new BABYLON.Vector3(0, yTarget, 0), BABYLON.Vector3.Up())
     const dist = ray.intersectsPlane(vPlane)
     return dist !== null ? ray.origin.add(ray.direction.scale(dist)) : null
   }
@@ -369,9 +371,19 @@ const initBabylonScene = () => {
       shadowCatcher.isVisible     = false
       shadowCatcher.isPickable    = false
 
-      const shadowMat = new BABYLON.ShadowOnlyMaterial('shadowMat', scene)
-      shadowMat.active = true
-      shadowMat.alpha = 0.4
+      let shadowMat
+      if (BABYLON.ShadowOnlyMaterial) {
+        shadowMat = new BABYLON.ShadowOnlyMaterial('shadowMat', scene)
+        shadowMat.active = true
+        shadowMat.alpha = 0.4
+      } else {
+        // Fallback to extremely subtle standard material if the specific library fails
+        shadowMat = new BABYLON.StandardMaterial('shadowMat', scene)
+        shadowMat.alpha = 0.05
+        shadowMat.specularColor = new BABYLON.Color3(0, 0, 0)
+        shadowMat.diffuseColor  = new BABYLON.Color3(0, 0, 0)
+        shadowMat.transparencyMode = BABYLON.Material.MATERIAL_ALPHABLEND
+      }
       shadowMat.freeze()
       shadowCatcher.material = shadowMat
 
