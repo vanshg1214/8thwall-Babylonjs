@@ -94,10 +94,13 @@ const initBabylonScene = () => {
       return dist !== null ? ray.origin.add(ray.direction.scale(dist)) : null
     }
 
-    // ── Mobile: 8th Wall hit test ──
+    // ── Mobile: 8th Wall SLAM hit test ──
     const rect = xrCanvas.getBoundingClientRect()
     const nx = (touchX - rect.left) / rect.width
     const ny = (touchY - rect.top)  / rect.height
+
+    // Estimate where the real floor is: phone is typically held ~1.5m above ground
+    const estimatedFloorY = camera.position.y - 1.5
 
     let hits = []
     try {
@@ -106,24 +109,34 @@ const initBabylonScene = () => {
       console.warn('[AR] hitTest error:', e)
     }
 
-    // Priority 1: Confirmed surface plane (best quality)
+    // Priority 1: Confirmed surface plane (this is the gold standard)
     const planeHit = hits.find(h => h.type === 'ESTIMATED_SURFACE_PLANE')
     if (planeHit) {
+      console.log('[AR] Hit: SURFACE_PLANE at y=' + planeHit.position.y.toFixed(2))
       return new BABYLON.Vector3(planeHit.position.x, planeHit.position.y, planeHit.position.z)
     }
 
-    // Priority 2: Feature points below camera (prevents ceiling/wall placement)
-    const validPoints = hits.filter(h => h.position.y < (camera.position.y - 0.3))
-    if (validPoints.length > 0) {
+    // Priority 2: Feature points — STRICT VALIDATION
+    // Only accept points that are near the estimated floor level (within ±0.5m)
+    // This rejects points on walls, railings, ceilings, and mid-air
+    const floorPoints = hits.filter(h => {
+      const distFromFloor = Math.abs(h.position.y - estimatedFloorY)
+      return distFromFloor < 0.5  // Must be within 50cm of estimated floor
+    })
+    if (floorPoints.length > 0) {
+      // Pick the lowest point (most likely to be the actual floor)
+      floorPoints.sort((a, b) => a.position.y - b.position.y)
+      console.log('[AR] Hit: FLOOR_POINT at y=' + floorPoints[0].position.y.toFixed(2))
       return new BABYLON.Vector3(
-        validPoints[0].position.x,
-        validPoints[0].position.y,
-        validPoints[0].position.z
+        floorPoints[0].position.x,
+        floorPoints[0].position.y,
+        floorPoints[0].position.z
       )
     }
 
-    // Priority 3: Virtual floor fallback (ensures first tap always works)
-    const fallbackY = hasPlaced ? floorY : 0
+    // Priority 3: Virtual floor at estimated floor level
+    // This ensures the model always lands on the "ground" even without SLAM data
+    const fallbackY = hasPlaced ? floorY : estimatedFloorY
     const ray = scene.createPickingRay(
       touchX - rect.left, touchY - rect.top,
       BABYLON.Matrix.Identity(), camera
@@ -132,7 +145,11 @@ const initBabylonScene = () => {
       new BABYLON.Vector3(0, fallbackY, 0), BABYLON.Vector3.Up()
     )
     const dist = ray.intersectsPlane(vPlane)
-    return dist !== null ? ray.origin.add(ray.direction.scale(dist)) : null
+    if (dist !== null) {
+      console.log('[AR] Hit: VIRTUAL_FLOOR at y=' + fallbackY.toFixed(2))
+      return ray.origin.add(ray.direction.scale(dist))
+    }
+    return null
   }
 
   // Math-only floor plane pick for dragging (no SLAM noise)
@@ -244,16 +261,18 @@ const initBabylonScene = () => {
           root.rotation.y = Math.atan2(dx, dz)
         }
 
-        // Shadow
-        if (shadowCatcher) {
+        // Shadow — only on desktop (on mobile the shadow catcher causes the "black plane" artifact)
+        if (shadowCatcher && isDesktop) {
           shadowCatcher.position.set(worldPos.x, worldPos.y, worldPos.z)
           shadowCatcher.isVisible = true
         }
-        meshes.forEach(m => {
-          if (m.getTotalVertices && m.getTotalVertices() > 0 && m.isVisible) {
-            shadowGenerator.addShadowCaster(m, true)
-          }
-        })
+        if (shadowGenerator) {
+          meshes.forEach(m => {
+            if (m.getTotalVertices && m.getTotalVertices() > 0 && m.isVisible) {
+              shadowGenerator.addShadowCaster(m, true)
+            }
+          })
+        }
 
         // Optimize: freeze meshes that won't change
         meshes.forEach(m => {
@@ -557,35 +576,44 @@ const initBabylonScene = () => {
       scene.imageProcessingConfiguration.toneMappingType =
         BABYLON.ImageProcessingConfiguration.TONEMAPPING_ACES
 
-      // ── Shadows (optimized for mobile) ──
+      // ── Shadows ──
+      // On desktop: full shadow system with ground catcher
+      // On mobile: NO shadow catcher ground plane (it causes the visible "black plane" artifact)
+      //            We still create the generator for model self-shadowing
       shadowGenerator = new BABYLON.ShadowGenerator(512, dir)
       shadowGenerator.useExponentialShadowMap = true
       shadowGenerator.bias       = 0.001
       shadowGenerator.normalBias = 0.02
 
-      shadowCatcher = BABYLON.MeshBuilder.CreateGround(
-        'shadow-catcher', { width: 10, height: 10 }, scene
-      )
-      shadowCatcher.position.y    = 0
-      shadowCatcher.receiveShadows = true
-      shadowCatcher.isVisible     = false
-      shadowCatcher.isPickable    = false
+      if (isDesktop) {
+        // Desktop only: create visible shadow-catching ground
+        shadowCatcher = BABYLON.MeshBuilder.CreateGround(
+          'shadow-catcher', { width: 10, height: 10 }, scene
+        )
+        shadowCatcher.position.y    = 0
+        shadowCatcher.receiveShadows = true
+        shadowCatcher.isVisible     = false
+        shadowCatcher.isPickable    = false
 
-      // Shadow material — ShadowOnlyMaterial if available, else minimal fallback
-      let shadowMat
-      if (BABYLON.ShadowOnlyMaterial) {
-        shadowMat = new BABYLON.ShadowOnlyMaterial('shadowMat', scene)
-        shadowMat.activeLight = dir
-        shadowMat.alpha = 0.4
+        let shadowMat
+        if (BABYLON.ShadowOnlyMaterial) {
+          shadowMat = new BABYLON.ShadowOnlyMaterial('shadowMat', scene)
+          shadowMat.activeLight = dir
+          shadowMat.alpha = 0.4
+        } else {
+          shadowMat = new BABYLON.StandardMaterial('shadowMat', scene)
+          shadowMat.alpha = 0.05
+          shadowMat.specularColor = new BABYLON.Color3(0, 0, 0)
+          shadowMat.diffuseColor  = new BABYLON.Color3(0, 0, 0)
+          shadowMat.transparencyMode = BABYLON.Material.MATERIAL_ALPHABLEND
+        }
+        shadowMat.freeze()
+        shadowCatcher.material = shadowMat
       } else {
-        shadowMat = new BABYLON.StandardMaterial('shadowMat', scene)
-        shadowMat.alpha = 0.05
-        shadowMat.specularColor = new BABYLON.Color3(0, 0, 0)
-        shadowMat.diffuseColor  = new BABYLON.Color3(0, 0, 0)
-        shadowMat.transparencyMode = BABYLON.Material.MATERIAL_ALPHABLEND
+        // Mobile: no shadow catcher at all — eliminates the black plane completely
+        shadowCatcher = null
+        console.log('[AR] Mobile mode: shadow catcher disabled to prevent black plane artifact')
       }
-      shadowMat.freeze()
-      shadowCatcher.material = shadowMat
 
       // ── Initialize touch interactions ──
       initTouchInteractions()
