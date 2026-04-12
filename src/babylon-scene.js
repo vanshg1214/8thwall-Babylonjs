@@ -261,12 +261,15 @@ const initBabylonScene = () => {
           root.rotation.y = Math.atan2(dx, dz)
         }
 
-        // Shadow — only on desktop (on mobile the shadow catcher causes the "black plane" artifact)
+        // Shadow — only on desktop
         if (shadowCatcher && isDesktop) {
           shadowCatcher.position.set(worldPos.x, worldPos.y, worldPos.z)
           shadowCatcher.isVisible = true
         }
-        if (shadowGenerator) {
+        
+        // PERFORMANCE: Disable self-shadowing on mobile entirely.
+        // It requires an extra render pass for every mesh and destroys FPS.
+        if (shadowGenerator && isDesktop) {
           meshes.forEach(m => {
             if (m.getTotalVertices && m.getTotalVertices() > 0 && m.isVisible) {
               shadowGenerator.addShadowCaster(m, true)
@@ -276,7 +279,10 @@ const initBabylonScene = () => {
 
         // Optimize: freeze meshes that won't change
         meshes.forEach(m => {
-          if (m.isVisible) m.freezeWorldMatrix()
+          if (m.isVisible) {
+            m.freezeWorldMatrix()
+            m.isPickable = false // PERFORMANCE: Disable picking on individual complex meshes
+          }
         })
 
         modelSizeXYZ = size.clone()
@@ -515,10 +521,14 @@ const initBabylonScene = () => {
       scene.useRightHandedSystem = true
       scene.autoClear  = false
       scene.clearColor = new BABYLON.Color4(0, 0, 0, 0)
-
-      // Performance: skip unnecessary scene picking
+      
+      // PERFORMANCE TWEAKS
       scene.skipPointerMovePicking = true
+      scene.skipPointerDownPicking = true // Native DOM handles interaction
+      scene.skipPointerUpPicking = true
       scene.autoClearDepthAndStencil = false
+      scene.blockMaterialDirtyMechanism = true // Freeze materials globally
+      if (!isDesktop) BABYLON.SceneOptimizer.OptimizeAsync(scene)
 
       scene.onBeforeRenderObservable.add(() => {
         engine.clear(new BABYLON.Color4(0, 0, 0, 0), true, true, true)
@@ -572,18 +582,22 @@ const initBabylonScene = () => {
         console.warn('[AR] Env map load failed', e)
       }
 
-      scene.imageProcessingConfiguration.toneMappingEnabled = true
-      scene.imageProcessingConfiguration.toneMappingType =
-        BABYLON.ImageProcessingConfiguration.TONEMAPPING_ACES
+      scene.imageProcessingConfiguration.toneMappingEnabled = isDesktop // PERFORMANCE: Disable on mobile
+      if (isDesktop) {
+        scene.imageProcessingConfiguration.toneMappingType =
+          BABYLON.ImageProcessingConfiguration.TONEMAPPING_ACES
+      }
 
       // ── Shadows ──
-      // On desktop: full shadow system with ground catcher
-      // On mobile: NO shadow catcher ground plane (it causes the visible "black plane" artifact)
-      //            We still create the generator for model self-shadowing
-      shadowGenerator = new BABYLON.ShadowGenerator(512, dir)
-      shadowGenerator.useExponentialShadowMap = true
-      shadowGenerator.bias       = 0.001
-      shadowGenerator.normalBias = 0.02
+      // PERFORMANCE: Disable shadow generator entirely on mobile.
+      if (isDesktop) {
+        shadowGenerator = new BABYLON.ShadowGenerator(512, dir)
+        shadowGenerator.useExponentialShadowMap = true
+        shadowGenerator.bias       = 0.001
+        shadowGenerator.normalBias = 0.02
+      } else {
+        shadowGenerator = null
+      }
 
       if (isDesktop) {
         // Desktop only: create visible shadow-catching ground
